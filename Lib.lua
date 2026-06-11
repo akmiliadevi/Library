@@ -1125,6 +1125,31 @@ function Library:CreateWindow(config)
     end
     local lastAppliedDragX, lastAppliedDragY = nil, nil
     local lastAppliedW, lastAppliedH = nil, nil
+    local hiddenDuringDrag = nil
+    local dragHideThreshold = 4
+    local function hideContentForDrag()
+        if hiddenDuringDrag then
+            return
+        end
+        hiddenDuringDrag = {}
+        for _, child in ipairs(self._win:GetChildren()) do
+            if child:IsA("GuiObject") and child ~= scriptHeader and child.Visible then
+                child.Visible = false
+                table.insert(hiddenDuringDrag, child)
+            end
+        end
+    end
+    local function restoreContentAfterDrag()
+        if not hiddenDuringDrag then
+            return
+        end
+        for _, child in ipairs(hiddenDuringDrag) do
+            if child.Parent then
+                child.Visible = true
+            end
+        end
+        hiddenDuringDrag = nil
+    end
     local function applyFrame()
         local inputPos = lastInputPos
         if not inputPos then
@@ -1136,6 +1161,9 @@ function Library:CreateWindow(config)
             local dy = inputPos.Y - dragStart.Y
             if dx ~= lastAppliedDragX or dy ~= lastAppliedDragY then
                 lastAppliedDragX, lastAppliedDragY = dx, dy
+                if not hiddenDuringDrag and (math.abs(dx) > dragHideThreshold or math.abs(dy) > dragHideThreshold) then
+                    hideContentForDrag()
+                end
                 self._win.Position =
                     UDim2.new(startPos.X.Scale, startPos.X.Offset + dx, startPos.Y.Scale, startPos.Y.Offset + dy)
             end
@@ -1176,6 +1204,7 @@ function Library:CreateWindow(config)
         lastInputPos = nil
         lastAppliedDragX, lastAppliedDragY = nil, nil
         lastAppliedW, lastAppliedH = nil, nil
+        restoreContentAfterDrag()
     end
     self:AddConnection(
         "headerDragStart",
