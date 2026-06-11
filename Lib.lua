@@ -1029,6 +1029,47 @@ function Library:CreateWindow(config)
             icon = nil
             minimized = false
         end
+        local iconLastInputPos = nil
+        local iconMoveConn, iconFrameConn = nil, nil
+        local function releaseIconMoveConns()
+            if iconMoveConn then
+                iconMoveConn:Disconnect()
+                iconMoveConn = nil
+            end
+            if iconFrameConn then
+                iconFrameConn:Disconnect()
+                iconFrameConn = nil
+            end
+            iconLastInputPos = nil
+        end
+        local function ensureIconMoveConns()
+            if iconMoveConn then
+                return
+            end
+            iconMoveConn = UserInputService.InputChanged:Connect(function(input)
+                if iconDragging and isMoveInput(input) then
+                    iconLastInputPos = input.Position
+                end
+            end)
+            iconFrameConn = RunService.RenderStepped:Connect(function()
+                if not iconLastInputPos or not icon or not icon.Parent or not iconStartPos or not iconDragStart then
+                    return
+                end
+                local delta = iconLastInputPos - iconDragStart
+                iconLastInputPos = nil
+                if delta.Magnitude > dragThreshold then
+                    iconDragMoved = true
+                end
+                icon.Position = UDim2.new(
+                    iconStartPos.X.Scale,
+                    iconStartPos.X.Offset + delta.X,
+                    iconStartPos.Y.Scale,
+                    iconStartPos.Y.Offset + delta.Y
+                )
+            end)
+            iconConns[#iconConns + 1] = iconMoveConn
+            iconConns[#iconConns + 1] = iconFrameConn
+        end
         iconConns[#iconConns + 1] = icon.InputBegan:Connect(function(input)
             if iconDragging then
                 return
@@ -1038,32 +1079,8 @@ function Library:CreateWindow(config)
                 iconDragMoved = false
                 iconDragStart = input.Position
                 iconStartPos = icon.Position
+                ensureIconMoveConns()
             end
-        end)
-        local iconLastInputPos = nil
-        iconConns[#iconConns + 1] = UserInputService.InputChanged:Connect(function(input)
-            if not iconDragging or not icon or not icon.Parent or not iconStartPos or not iconDragStart then
-                return
-            end
-            if isMoveInput(input) then
-                iconLastInputPos = input.Position
-            end
-        end)
-        iconConns[#iconConns + 1] = RunService.RenderStepped:Connect(function()
-            if not iconLastInputPos or not icon or not icon.Parent or not iconStartPos or not iconDragStart then
-                return
-            end
-            local delta = iconLastInputPos - iconDragStart
-            if delta.Magnitude > dragThreshold then
-                iconDragMoved = true
-            end
-            icon.Position = UDim2.new(
-                iconStartPos.X.Scale,
-                iconStartPos.X.Offset + delta.X,
-                iconStartPos.Y.Scale,
-                iconStartPos.Y.Offset + delta.Y
-            )
-            iconLastInputPos = nil
         end)
         iconConns[#iconConns + 1] = UserInputService.InputEnded:Connect(function(input)
             if not iconDragging then
@@ -1071,6 +1088,7 @@ function Library:CreateWindow(config)
             end
             if isClickInput(input) then
                 iconDragging = false
+                releaseIconMoveConns()
                 if icon and icon.Parent then
                     savedIconPos = icon.Position
                     if not iconDragMoved then
@@ -1105,22 +1123,32 @@ function Library:CreateWindow(config)
             lastInputPos = input.Position
         end
     end
+    local lastAppliedDragX, lastAppliedDragY = nil, nil
+    local lastAppliedW, lastAppliedH = nil, nil
     local function applyFrame()
-        if not lastInputPos then
+        local inputPos = lastInputPos
+        if not inputPos then
             return
         end
+        lastInputPos = nil
         if dragging and startPos then
-            local delta = lastInputPos - dragStart
-            self._win.Position =
-                UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+            local dx = inputPos.X - dragStart.X
+            local dy = inputPos.Y - dragStart.Y
+            if dx ~= lastAppliedDragX or dy ~= lastAppliedDragY then
+                lastAppliedDragX, lastAppliedDragY = dx, dy
+                self._win.Position =
+                    UDim2.new(startPos.X.Scale, startPos.X.Offset + dx, startPos.Y.Scale, startPos.Y.Offset + dy)
+            end
         end
         if resizing and resizeStartPos then
-            local delta = lastInputPos - resizeStartPos
+            local delta = inputPos - resizeStartPos
             local newWidth = math.clamp(resizeStartSize.X.Offset + delta.X, minWindowSize.X, maxWindowSize.X)
             local newHeight = math.clamp(resizeStartSize.Y.Offset + delta.Y, minWindowSize.Y, maxWindowSize.Y)
-            self._win.Size = UDim2.new(0, newWidth, 0, newHeight)
+            if newWidth ~= lastAppliedW or newHeight ~= lastAppliedH then
+                lastAppliedW, lastAppliedH = newWidth, newHeight
+                self._win.Size = UDim2.new(0, newWidth, 0, newHeight)
+            end
         end
-        lastInputPos = nil
     end
     local function ensureMoveConn()
         if not moveConn then
@@ -1146,6 +1174,8 @@ function Library:CreateWindow(config)
             frameConn = nil
         end
         lastInputPos = nil
+        lastAppliedDragX, lastAppliedDragY = nil, nil
+        lastAppliedW, lastAppliedH = nil, nil
     end
     self:AddConnection(
         "headerDragStart",
