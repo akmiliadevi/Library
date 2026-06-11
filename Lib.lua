@@ -3029,4 +3029,15 @@ function Library:Window(config)
     end
     return WindowObject
 end
+Library._internal = {
+    stripRichTags = stripRichTags,
+    sanitizeInput = sanitizeInput,
+    ValidateConfigTypes = ValidateConfigTypes,
+    DeepCopy = DeepCopy,
+    MergeTables = MergeTables,
+    formatRichText = formatRichText,
+    safecall = safecall,
+    warnLog = warnLog,
+    disconnectAll = disconnectAll,
+}
 return Library
