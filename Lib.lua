@@ -118,6 +118,59 @@ local function safecall(fn, ...)
     return ok, err
 end
 
+-- Shared utility: pcall with automatic warnLog on failure
+local function pcallWarn(context, fn, ...)
+    local ok, err = pcall(fn, ...)
+    if not ok then
+        warnLog(context, err)
+    end
+    return ok, err
+end
+
+-- Shared utility: safely cancel a task thread
+local function cancelThread(thread)
+    if thread then
+        pcall(task.cancel, thread)
+    end
+end
+
+-- Shared utility: check if input is mouse button 1 or touch
+local function isClickInput(input)
+    return input.UserInputType == Enum.UserInputType.MouseButton1
+        or input.UserInputType == Enum.UserInputType.Touch
+end
+
+-- Shared utility: check if input is mouse movement or touch
+local function isMoveInput(input)
+    return input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch
+end
+
+-- Shared utility: safely destroy an instance if it still exists
+local function safeDestroy(instance)
+    if instance and instance.Parent then
+        instance:Destroy()
+    end
+end
+
+-- Shared utility: register hover enter/leave connections on Library
+local function addHoverConnections(lib, namePrefix, element, onEnter, onLeave)
+    lib:AddConnection(
+        namePrefix .. "HoverIn",
+        element.MouseEnter:Connect(onEnter)
+    )
+    lib:AddConnection(
+        namePrefix .. "HoverOut",
+        element.MouseLeave:Connect(onLeave)
+    )
+end
+
+-- Shared utility: set a config value and mark dirty
+local function setConfigAndDirty(configPath, value)
+    Library.ConfigSystem.Set(configPath, value)
+    MarkDirty()
+end
+
 local function stripRichTags(text)
     if type(text) ~= "string" then
         return tostring(text or "")
@@ -158,9 +211,7 @@ local function disconnectAll(connList)
     for i = #connList, 1, -1 do
         local c = connList[i]
         connList[i] = nil
-        pcall(function()
-            c:Disconnect()
-        end)
+        pcall(c.Disconnect, c)
     end
 end
 
@@ -178,9 +229,7 @@ local function createDebouncedSearch(delayTime, searchFn)
     local thread = nil
     return function(query)
         if thread then
-            pcall(function()
-                task.cancel(thread)
-            end)
+            cancelThread(thread)
             thread = nil
         end
         if query == "" then
@@ -234,9 +283,7 @@ local function makeConfirmButton(section, title, confirmColor, onConfirm)
                     btn.Text = "Klik lagi untuk konfirmasi!"
                 end
                 btnFrame.BackgroundColor3 = confirmColor
-                if thread then
-                    task.cancel(thread)
-                end
+                cancelThread(thread)
                 thread = task.delay(3, function()
                     confirmed = false
                     local b = btnFrame:FindFirstChildWhichIsA("TextButton")
@@ -246,9 +293,7 @@ local function makeConfirmButton(section, title, confirmColor, onConfirm)
                     btnFrame.BackgroundColor3 = colors.primary
                 end)
             else
-                if thread then
-                    task.cancel(thread)
-                end
+                cancelThread(thread)
                 confirmed = false
                 local btn = btnFrame:FindFirstChildWhichIsA("TextButton")
                 if btn then
@@ -309,43 +354,24 @@ local function new(class, props)
 end
 function Library:AddConnection(name, connection)
     if self._connections[name] then
-        local ok, err = pcall(function()
-            self._connections[name]:Disconnect()
-        end)
-        if not ok then
-            warnLog("AddConnection:Disconnect", err)
-        end
+        pcallWarn("AddConnection:Disconnect", self._connections[name].Disconnect, self._connections[name])
     end
     self._connections[name] = connection
     return connection
 end
 function Library:Cleanup()
     if isDirty then
-        local ok, err = pcall(function()
-            Library.ConfigSystem.Save()
-        end)
-        if not ok then
-            warnLog("Cleanup:Save", err)
-        end
+        pcallWarn("Cleanup:Save", Library.ConfigSystem.Save)
         isDirty = false
     end
     if self._connections then
         for name, conn in pairs(self._connections) do
-            local ok, err = pcall(function()
-                conn:Disconnect()
-            end)
-            if not ok then
-                warnLog("Cleanup:Disconnect:" .. tostring(name), err)
-            end
+            pcallWarn("Cleanup:Disconnect:" .. tostring(name), conn.Disconnect, conn)
         end
         table.clear(self._connections)
     end
-    if self._saveThread then
-        pcall(function()
-            task.cancel(self._saveThread)
-        end)
-        self._saveThread = nil
-    end
+    cancelThread(self._saveThread)
+    self._saveThread = nil
     table.clear(CallbackRegistry)
     if self.flags then
         table.clear(self.flags)
@@ -366,11 +392,7 @@ function Library:Cleanup()
     self._dropdownCount = 0
     if self._activeNotifs then
         for _, notif in ipairs(self._activeNotifs) do
-            pcall(function()
-                if notif and notif.Parent then
-                    notif:Destroy()
-                end
-            end)
+            pcall(safeDestroy, notif)
         end
         table.clear(self._activeNotifs)
     end
@@ -411,14 +433,11 @@ function Library.ConfigSystem.SetDefaults(defaults)
     DefaultConfig = DeepCopy(defaults)
 end
 function Library.ConfigSystem.Save()
-    local ok, err = pcall(function()
+    local ok, err = pcallWarn("ConfigSystem.Save", function()
         EnsureFolderExists()
         local encoded = HttpService:JSONEncode(CurrentConfig)
         writefile(CONFIG_FILE, encoded)
     end)
-    if not ok then
-        warnLog("ConfigSystem.Save", err)
-    end
     return ok, err
 end
 function Library.ConfigSystem.Load()
@@ -432,21 +451,14 @@ function Library.ConfigSystem.Load()
             end
             local loaded = HttpService:JSONDecode(raw)
             if type(loaded) == "table" then
-                pcall(function()
-                    writefile(CONFIG_BACKUP, raw)
-                end)
+                pcall(writefile, CONFIG_BACKUP, raw)
                 local validated = ValidateConfigTypes(loaded, DefaultConfig)
                 MergeTables(CurrentConfig, validated)
             end
         end)
         if not ok then
             warnLog("ConfigSystem.Load", "Corrupt config, resetting to defaults: " .. tostring(err))
-            local delOk, delErr = pcall(function()
-                delfile(CONFIG_FILE)
-            end)
-            if not delOk then
-                warnLog("ConfigSystem.Load:Delete", delErr)
-            end
+            pcallWarn("ConfigSystem.Load:Delete", delfile, CONFIG_FILE)
             CurrentConfig = DeepCopy(DefaultConfig)
         end
     end
@@ -496,7 +508,7 @@ function Library.ConfigSystem.RestoreBackup()
         return false, "No backup file found"
     end
     local restored = false
-    local ok, err = pcall(function()
+    local ok, err = pcallWarn("ConfigSystem.RestoreBackup", function()
         local raw = readfile(CONFIG_BACKUP)
         if not raw or raw == "" then
             return
@@ -510,7 +522,6 @@ function Library.ConfigSystem.RestoreBackup()
         restored = true
     end)
     if not ok then
-        warnLog("ConfigSystem.RestoreBackup", err)
         return false, err
     end
     if not restored then
@@ -524,23 +535,14 @@ local function MarkDirty()
         return
     end
     isDirty = true
-    if Library._saveThread then
-        pcall(function()
-            task.cancel(Library._saveThread)
-        end)
-        Library._saveThread = nil
-    end
+    cancelThread(Library._saveThread)
+    Library._saveThread = nil
     Library._saveThread = task.delay(2, function()
         if not isDirty then
             Library._saveThread = nil
             return
         end
-        local ok, err = pcall(function()
-            Library.ConfigSystem.Save()
-        end)
-        if not ok then
-            warnLog("MarkDirty:AutoSave", err)
-        end
+        local ok = pcallWarn("MarkDirty:AutoSave", Library.ConfigSystem.Save)
         if ok then
             isDirty = false
         end
@@ -564,10 +566,7 @@ local function ExecuteConfigCallbacks()
     for path, entry in pairs(CallbackRegistry) do
         if entry.updateVisual then
             local value = Library.ConfigSystem.Get(entry.path, entry.default)
-            local ok, err = pcall(entry.updateVisual, value)
-            if not ok then
-                warnLog("ExecuteConfigCallbacks:Visual:" .. tostring(path), err)
-            end
+            pcallWarn("ExecuteConfigCallbacks:Visual:" .. tostring(path), entry.updateVisual, value)
         end
     end
     local function runCallbacks(wantToggle)
@@ -575,10 +574,7 @@ local function ExecuteConfigCallbacks()
             local isToggle = entry.type == "toggle"
             if entry.callback and isToggle == wantToggle then
                 local value = Library.ConfigSystem.Get(entry.path, entry.default)
-                local ok, err = pcall(entry.callback, value)
-                if not ok then
-                    warnLog("ExecuteConfigCallbacks:Callback:" .. tostring(path), err)
-                end
+                pcallWarn("ExecuteConfigCallbacks:Callback:" .. tostring(path), entry.callback, value)
             end
         end
     end
@@ -766,18 +762,11 @@ function Library:CreateWindow(config)
         minLine.Size = hovering and UDim2.new(0, 12, 0, 2) or UDim2.new(0, 10, 0, 2)
         minLine.Position = hovering and UDim2.new(0.5, -6, 0.5, -1) or UDim2.new(0.5, -5, 0.5, -1)
     end
-    self:AddConnection(
-        "minimizeHoverIn",
-        btnMinHeader.MouseEnter:Connect(function()
-            setMinimizeHover(true)
-        end)
-    )
-    self:AddConnection(
-        "minimizeHoverOut",
-        btnMinHeader.MouseLeave:Connect(function()
-            setMinimizeHover(false)
-        end)
-    )
+    addHoverConnections(self, "minimize", btnMinHeader, function()
+        setMinimizeHover(true)
+    end, function()
+        setMinimizeHover(false)
+    end)
     local discordLink = "https://discord.gg/lynxx"
     local discordText = "discord.gg/lynxx"
     local discordTextStart = 33
@@ -859,18 +848,11 @@ function Library:CreateWindow(config)
         end
     end
     self:AddConnection("discordClick", btnDiscord.MouseButton1Click:Connect(copyDiscord))
-    self:AddConnection(
-        "discordHoverIn",
-        btnDiscord.MouseEnter:Connect(function()
-            setDiscordHover(true)
-        end)
-    )
-    self:AddConnection(
-        "discordHoverOut",
-        btnDiscord.MouseLeave:Connect(function()
-            setDiscordHover(false)
-        end)
-    )
+    addHoverConnections(self, "discord", btnDiscord, function()
+        setDiscordHover(true)
+    end, function()
+        setDiscordHover(false)
+    end)
     self._navContainer = new("ScrollingFrame", {
         Parent = self._sidebar,
         Size = UDim2.new(1, -10, 1, -39),
@@ -1026,10 +1008,7 @@ function Library:CreateWindow(config)
             if iconDragging then
                 return
             end
-            if
-                input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch
-            then
+            if isClickInput(input) then
                 iconDragging = true
                 iconDragMoved = false
                 iconDragStart = input.Position
@@ -1041,10 +1020,7 @@ function Library:CreateWindow(config)
             if not iconDragging or not icon or not icon.Parent or not iconStartPos or not iconDragStart then
                 return
             end
-            if
-                input.UserInputType == Enum.UserInputType.MouseMovement
-                or input.UserInputType == Enum.UserInputType.Touch
-            then
+            if isMoveInput(input) then
                 iconLastInputPos = input.Position
             end
         end)
@@ -1068,10 +1044,7 @@ function Library:CreateWindow(config)
             if not iconDragging then
                 return
             end
-            if
-                input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch
-            then
+            if isClickInput(input) then
                 iconDragging = false
                 if icon and icon.Parent then
                     savedIconPos = icon.Position
@@ -1103,10 +1076,7 @@ function Library:CreateWindow(config)
     local moveConn, frameConn = nil, nil
     local lastInputPos = nil
     local function onMove(input)
-        if
-            input.UserInputType == Enum.UserInputType.MouseMovement
-            or input.UserInputType == Enum.UserInputType.Touch
-        then
+        if isMoveInput(input) then
             lastInputPos = input.Position
         end
     end
@@ -1155,10 +1125,7 @@ function Library:CreateWindow(config)
     self:AddConnection(
         "headerDragStart",
         scriptHeader.InputBegan:Connect(function(input)
-            if
-                input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch
-            then
+            if isClickInput(input) then
                 bringToFront()
                 dragging, dragStart, startPos = true, input.Position, self._win.Position
                 ensureMoveConn()
@@ -1168,10 +1135,7 @@ function Library:CreateWindow(config)
     self:AddConnection(
         "resizeDragStart",
         resizeHandle.InputBegan:Connect(function(input)
-            if
-                input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch
-            then
+            if isClickInput(input) then
                 resizing, resizeStartPos, resizeStartSize = true, input.Position, self._win.Size
                 ensureMoveConn()
             end
@@ -1180,10 +1144,7 @@ function Library:CreateWindow(config)
     self:AddConnection(
         "inputEnded",
         UserInputService.InputEnded:Connect(function(input)
-            if
-                input.UserInputType == Enum.UserInputType.MouseButton1
-                or input.UserInputType == Enum.UserInputType.Touch
-            then
+            if isClickInput(input) then
                 dragging = false
                 resizing = false
                 releaseMoveConn()
@@ -1360,10 +1321,7 @@ function Library:_createSearchBar()
             self:_switchPage(entry.pageName)
         end
         if entry.expand then
-            local ok, err = pcall(entry.expand)
-            if not ok then
-                warnLog("goToFeature:expand", err)
-            end
+            pcallWarn("goToFeature:expand", entry.expand)
         end
         task.defer(function()
             local frame = entry.frame
@@ -1515,18 +1473,11 @@ function Library:_createSearchBar()
             searchBox.Text = ""
         end)
     )
-    self:AddConnection(
-        "searchClearHoverIn",
-        clearBtn.MouseEnter:Connect(function()
-            setClearColor(colors.primary)
-        end)
-    )
-    self:AddConnection(
-        "searchClearHoverOut",
-        clearBtn.MouseLeave:Connect(function()
-            setClearColor(colors.textDimmer)
-        end)
-    )
+    addHoverConnections(self, "searchClear", clearBtn, function()
+        setClearColor(colors.primary)
+    end, function()
+        setClearColor(colors.textDimmer)
+    end)
 end
 function Library:CreatePage(name, title, imageId, order)
     local page = new("Frame", {
@@ -1784,8 +1735,7 @@ function Library:CreateToggle(parent, label, configPath, callback, disableSave, 
             on = not on
             updateVisual()
             if configPath and not disableSave then
-                Library.ConfigSystem.Set(configPath, on)
-                MarkDirty()
+                setConfigAndDirty(configPath, on)
             end
             self.flags[configPath or label] = on
             if callback then
@@ -1807,8 +1757,7 @@ function Library:CreateToggle(parent, label, configPath, callback, disableSave, 
             on = val
             updateVisual()
             if configPath and not disableSave then
-                Library.ConfigSystem.Set(configPath, on)
-                MarkDirty()
+                setConfigAndDirty(configPath, on)
             end
             Library.flags[configPath or label] = on
         end,
@@ -2083,9 +2032,7 @@ function Library:_createBaseDropdown(
         if #framesToDelete > 0 then
             task.spawn(function()
                 for i, f in ipairs(framesToDelete) do
-                    pcall(function()
-                        f:Destroy()
-                    end)
+                    pcall(safeDestroy, f)
                     if i % 8 == 0 then
                         RunService.Heartbeat:Wait()
                     end
@@ -2236,8 +2183,7 @@ function Library:_createBaseDropdown(
         end
         DropdownFunc.Value = Value
         if configPath then
-            Library.ConfigSystem.Set(configPath, Value)
-            MarkDirty()
+            setConfigAndDirty(configPath, Value)
         end
         if isBuilt then
             refreshSelectionVisuals()
@@ -2415,8 +2361,7 @@ function Library:CreateInput(parent, label, configPath, defaultValue, callback, 
             inputBox.Text = rawValue
             local value = resolveValue(rawValue)
             if configPath then
-                Library.ConfigSystem.Set(configPath, value)
-                MarkDirty()
+                setConfigAndDirty(configPath, value)
             end
             if callback then
                 safecall(callback, value)
@@ -2491,12 +2436,7 @@ function Library:CreateButton(parent, label, callback)
             end
             isClicking = true
             if callback then
-                task.spawn(function()
-                    local ok, err = pcall(callback)
-                    if not ok then
-                        warnLog("CreateButton:Callback:" .. tostring(label), err)
-                    end
-                end)
+                task.spawn(pcallWarn, "CreateButton:Callback:" .. tostring(label), callback)
             end
             task.delay(0.1, function()
                 isClicking = false
@@ -2514,30 +2454,16 @@ function Library:Initialize()
     self._initialized = true
     ExecuteConfigCallbacks()
     if self._pendingWindowObj then
-        local ok, err = pcall(function()
-            self:_createConfigTab(self._pendingWindowObj)
-        end)
-        if not ok then
-            warnLog("Initialize:CreateConfigTab", err)
-        end
+        pcallWarn("Initialize:CreateConfigTab", self._createConfigTab, self, self._pendingWindowObj)
         self._pendingWindowObj = nil
     end
     self:AddConnection(
         "playerRemoving",
         Players.PlayerRemoving:Connect(function(plr)
             if plr == localPlayer then
-                if Library._saveThread then
-                    pcall(function()
-                        task.cancel(Library._saveThread)
-                    end)
-                    Library._saveThread = nil
-                end
-                local ok, err = pcall(function()
-                    Library.ConfigSystem.Save()
-                end)
-                if not ok then
-                    warnLog("playerRemoving:Save", err)
-                end
+                cancelThread(Library._saveThread)
+                Library._saveThread = nil
+                pcallWarn("playerRemoving:Save", Library.ConfigSystem.Save)
                 isDirty = false
             end
         end)
@@ -2558,11 +2484,7 @@ function Library:MakeNotify(config)
     for i = #self._activeNotifs, 1, -1 do
         local old = self._activeNotifs[i]
         table.remove(self._activeNotifs, i)
-        pcall(function()
-            if old and old.Parent then
-                old:Destroy()
-            end
-        end)
+        pcall(safeDestroy, old)
     end
     local notif = new("Frame", {
         Parent = self._gui,
@@ -2622,11 +2544,7 @@ function Library:MakeNotify(config)
         ZIndex = 201,
     })
     task.delay(delay, function()
-        pcall(function()
-            if notif and notif.Parent then
-                notif:Destroy()
-            end
-        end)
+        pcall(safeDestroy, notif)
     end)
     notif.Destroying:Connect(function()
         if not self._activeNotifs then
