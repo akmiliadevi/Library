@@ -204,6 +204,8 @@ local function ValidateConfigTypes(loaded, schema)
             validated[k] = ValidateConfigTypes(loadedVal, schemaVal)
         elseif type(loadedVal) == type(schemaVal) then
             validated[k] = loadedVal
+        else
+            warnLog("ValidateConfigTypes", "Key '" .. tostring(k) .. "' expected type '" .. type(schemaVal) .. "' but got '" .. type(loadedVal) .. "', using default")
         end
     end
     return validated
@@ -302,7 +304,7 @@ local function makeConfirmButton(section, title, confirmColor, onConfirm)
                     btn.Text = title
                 end
                 btnFrame.BackgroundColor3 = colors.primary
-                onConfirm()
+                pcallWarn("ConfirmButton:" .. tostring(title), onConfirm)
             end
         end,
     })
@@ -426,9 +428,12 @@ local function MergeTables(target, source)
     end
 end
 local function EnsureFolderExists()
-    if not isfolder(CONFIG_FOLDER) then
-        makefolder(CONFIG_FOLDER)
-    end
+    local ok, err = pcallWarn("EnsureFolderExists", function()
+        if not isfolder(CONFIG_FOLDER) then
+            makefolder(CONFIG_FOLDER)
+        end
+    end)
+    return ok
 end
 Library.ConfigSystem = {}
 function Library.ConfigSystem.SetDefaults(defaults)
@@ -457,7 +462,7 @@ function Library.ConfigSystem.Load()
             end
             local loaded = HttpService:JSONDecode(raw)
             if type(loaded) == "table" then
-                pcall(writefile, CONFIG_BACKUP, raw)
+                pcallWarn("ConfigSystem.Load:Backup", writefile, CONFIG_BACKUP, raw)
                 local validated = ValidateConfigTypes(loaded, DefaultConfig)
                 MergeTables(CurrentConfig, validated)
             end
@@ -506,8 +511,10 @@ function Library.ConfigSystem.Reset()
 end
 function Library.ConfigSystem.Delete()
     if isfile(CONFIG_FILE) then
-        delfile(CONFIG_FILE)
+        local ok, err = pcallWarn("ConfigSystem.Delete", delfile, CONFIG_FILE)
+        return ok, err
     end
+    return true
 end
 function Library.ConfigSystem.RestoreBackup()
     if not isfile(CONFIG_BACKUP) then
@@ -533,7 +540,11 @@ function Library.ConfigSystem.RestoreBackup()
     if not restored then
         return false, "Backup file is empty or invalid"
     end
-    Library.ConfigSystem.Save()
+    local saveOk, saveErr = Library.ConfigSystem.Save()
+    if not saveOk then
+        warnLog("ConfigSystem.RestoreBackup:Save", saveErr)
+        return true, "Restored but failed to save: " .. tostring(saveErr)
+    end
     return true
 end
 local function MarkDirty()
@@ -1754,7 +1765,7 @@ function Library:CreateToggle(parent, label, configPath, callback, disableSave, 
             end
             self.flags[configPath or label] = on
             if callback then
-                callback(on)
+                pcallWarn("CreateToggle:Callback:" .. tostring(label), callback, on)
             end
         end)
     )
@@ -2207,9 +2218,9 @@ function Library:_createBaseDropdown(
         end
         if onSelect then
             if isMulti then
-                onSelect(DropdownFunc.Value)
+                pcallWarn("Dropdown:onSelect:" .. tostring(title), onSelect, DropdownFunc.Value)
             else
-                onSelect((DropdownFunc.Value ~= nil) and tostring(DropdownFunc.Value) or "")
+                pcallWarn("Dropdown:onSelect:" .. tostring(title), onSelect, (DropdownFunc.Value ~= nil) and tostring(DropdownFunc.Value) or "")
             end
         end
     end
@@ -2719,7 +2730,7 @@ function Library:Window(config)
                 local wrappedCallback = function(val)
                     toggleObj._value = val
                     if callback then
-                        callback(val)
+                        pcallWarn("AddToggle:Callback:" .. tostring(title), callback, val)
                     end
                 end
                 local toggleResult =
@@ -2735,7 +2746,7 @@ function Library:Window(config)
                         toggleResult.set(val)
                     end
                     if callback then
-                        callback(val)
+                        pcallWarn("AddToggle:SetValue:" .. tostring(title), callback, val)
                     end
                 end
                 function toggleObj:GetValue()
