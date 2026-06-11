@@ -167,12 +167,6 @@ local function addHoverConnections(lib, namePrefix, element, onEnter, onLeave)
     )
 end
 
--- Shared utility: set a config value and mark dirty
-local function setConfigAndDirty(configPath, value)
-    Library.ConfigSystem.Set(configPath, value)
-    MarkDirty()
-end
-
 local function stripRichTags(text)
     if type(text) ~= "string" then
         return tostring(text or "")
@@ -565,6 +559,11 @@ local function MarkDirty()
         end
         Library._saveThread = nil
     end)
+end
+-- Shared utility: set a config value and mark dirty
+local function setConfigAndDirty(configPath, value)
+    Library.ConfigSystem.Set(configPath, value)
+    MarkDirty()
 end
 local function RegisterCallback(configPath, callback, componentType, defaultValue, updateVisualFn)
     if not configPath then
