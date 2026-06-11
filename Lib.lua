@@ -9,6 +9,8 @@ local HttpService = game:GetService("HttpService")
 local localPlayer = Players.LocalPlayer
 
 local MAX_INPUT_LENGTH = 1000
+local MAX_SEARCH_LENGTH = 200
+local MAX_CONFIG_FILE_SIZE = 1024 * 1024
 local CONFIG_FOLDER = "LynxGUI_Configs"
 local CONFIG_FILE = CONFIG_FOLDER .. "/lynx_config.json"
 local CONFIG_BACKUP = CONFIG_FOLDER .. "/lynx_config.backup.json"
@@ -430,6 +432,10 @@ function Library.ConfigSystem.Load()
             if not raw or raw == "" then
                 return
             end
+            if #raw > MAX_CONFIG_FILE_SIZE then
+                warnLog("ConfigSystem.Load", "Config file exceeds size limit (" .. #raw .. " bytes), skipping")
+                return
+            end
             local loaded = HttpService:JSONDecode(raw)
             if type(loaded) == "table" then
                 pcall(function()
@@ -588,20 +594,29 @@ end
 _G.LynxGUI = _G.LynxGUI or {}
 _G.LynxGUI.AutoSaveEnabled = true
 function _G.LynxGUI.GetConfigValue(key, default)
+    if type(key) ~= "string" or key == "" then
+        return default
+    end
     return Library.ConfigSystem.Get(key, default)
 end
 function _G.LynxGUI.SaveConfigValue(key, value)
+    if type(key) ~= "string" or key == "" then
+        return
+    end
+    local valType = type(value)
+    if valType ~= "string" and valType ~= "number" and valType ~= "boolean" and valType ~= "table" then
+        return
+    end
+    if valType == "string" and #value > MAX_INPUT_LENGTH then
+        return
+    end
     Library.ConfigSystem.Set(key, value)
     if _autoSaveEnabled then
         MarkDirty()
     end
 end
 function _G.LynxGUI.GetFullConfig()
-    local copy = {}
-    for k, v in pairs(CurrentConfig) do
-        copy[k] = v
-    end
-    return copy
+    return DeepCopy(CurrentConfig)
 end
 function Library:CreateWindow(config)
     config = config or {}
@@ -1438,7 +1453,7 @@ function Library:_createSearchBar()
         return data
     end
     local function doSearch(query)
-        query = tostring(query or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+        query = sanitizeInput(tostring(query or ""), MAX_SEARCH_LENGTH):lower():gsub("^%s+", ""):gsub("%s+$", "")
         clearBtn.Visible = (query ~= "")
         if query == "" then
             for _, r in ipairs(rowPool) do
@@ -2292,7 +2307,7 @@ function Library:_createBaseDropdown(
         "searchBox_" .. dropdownLayoutOrder,
         searchBox:GetPropertyChangedSignal("Text"):Connect(function()
             ensureBuilt()
-            debouncedDropdownSearch(string.lower(searchBox.Text))
+            debouncedDropdownSearch(string.lower(sanitizeInput(searchBox.Text, MAX_SEARCH_LENGTH)))
         end)
     )
 
