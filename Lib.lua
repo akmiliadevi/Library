@@ -422,7 +422,7 @@ local function MergeTables(target, source)
     end
 end
 local function EnsureFolderExists()
-    local ok, err = pcallWarn("EnsureFolderExists", function()
+    local ok = pcallWarn("EnsureFolderExists", function()
         if not isfolder(CONFIG_FOLDER) then
             makefolder(CONFIG_FOLDER)
         end
@@ -1013,7 +1013,11 @@ function Library:CreateWindow(config)
         local iconStartPos = nil
         local iconDragMoved = false
         local dragThreshold = 6
+        local releaseIconMoveConns
         local function disconnectIconConns()
+            if releaseIconMoveConns then
+                releaseIconMoveConns()
+            end
             disconnectAll(iconConns)
         end
         local function restoreFromIcon()
@@ -1031,7 +1035,7 @@ function Library:CreateWindow(config)
         end
         local iconLastInputPos = nil
         local iconMoveConn, iconFrameConn = nil, nil
-        local function releaseIconMoveConns()
+        function releaseIconMoveConns()
             if iconMoveConn then
                 iconMoveConn:Disconnect()
                 iconMoveConn = nil
@@ -1067,8 +1071,6 @@ function Library:CreateWindow(config)
                     iconStartPos.Y.Offset + delta.Y
                 )
             end)
-            iconConns[#iconConns + 1] = iconMoveConn
-            iconConns[#iconConns + 1] = iconFrameConn
         end
         iconConns[#iconConns + 1] = icon.InputBegan:Connect(function(input)
             if iconDragging then
@@ -1847,7 +1849,7 @@ function Library:_initDropdownSystem()
         Parent = self._dropdownOverlay,
         Size = UDim2.new(1, 0, 1, 0),
         BackgroundColor3 = Color3.fromRGB(255, 255, 255),
-        BackgroundTransparency = 0.999,
+        BackgroundTransparency = 1,
         BorderSizePixel = 0,
         Text = "",
         ZIndex = 151,
@@ -2207,7 +2209,7 @@ function Library:_createBaseDropdown(
             Name = "ChooseFrame",
             ZIndex = 156,
         })
-        new("UIStroke", { Parent = chooseFrame, Color = colors.primary, Thickness = 1.6, Transparency = 0.999 })
+        new("UIStroke", { Parent = chooseFrame, Color = colors.primary, Thickness = 1.6, Transparency = 1 })
         new("UICorner", { Parent = chooseFrame, CornerRadius = UDim.new(0, 3) })
 
         local conn = optionButton.Activated:Connect(function()
